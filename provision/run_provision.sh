@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -o errexit
 
 CONFIG_FILE=$1
 DB_NAME=$2
