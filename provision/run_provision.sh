@@ -8,9 +8,12 @@ DB_PASSWORD=$4
 DB_HOST=$5
 
 #Install required packages and WordPress
+until apt-get -y update && apt-get -y install apache2 php libapache2-mod-php php-mcrypt php-mysql php-curl php-gd php-mbstring php-mcrypt php-xml php-xmlrpc
+do
+  echo "Try again"
+  sleep 5
+done
 
-apt-get -y update
-apt-get -y install apache2 php libapache2-mod-php php-mcrypt php-mysql php-curl php-gd php-mbstring php-mcrypt php-xml php-xmlrpc
 cd /tmp
 curl -O https://wordpress.org/latest.tar.gz
 tar xzvf latest.tar.gz
