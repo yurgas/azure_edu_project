@@ -7,8 +7,12 @@ DB_USER=$3
 DB_PASSWORD=$4
 DB_HOST=$5
 
+AZ_SHARE_USER=$6
+AZ_SHARE_PASS=$7
+AZ_SHARE=$8
+
 #Install required packages and WordPress
-until apt-get -y update && apt-get -y install apache2 php libapache2-mod-php php-mcrypt php-mysql php-curl php-gd php-mbstring php-mcrypt php-xml php-xmlrpc
+until apt-get -y update && apt-get -y install cifs-utils apache2 php libapache2-mod-php php-mcrypt php-mysql php-curl php-gd php-mbstring php-mcrypt php-xml php-xmlrpc
 do
   echo "Try again"
   sleep 5
@@ -26,6 +30,15 @@ chmod g+w /var/www/html/wp-content
 chmod -R g+w /var/www/html/wp-content/themes
 chmod -R g+w /var/www/html/wp-content/plugins
 systemctl restart apache2
+
+#Mount file storage
+
+mount -t cifs //${AZ_SHARE_USER}.file.core.windows.net/${AZ_SHARE} /var/www/html/wp-content -o vers=3.0,username=${AZ_SHARE_USER},password=${AZ_SHARE_PASS},gid=`id -g www-data`,dir_mode=0775,file_mode=0664
+# if no static files, then copy from distribution
+if [[ `ls /var/www/html/wp-content | wc -l` == "0" ]]; then
+  echo 'Copying static resources ...'
+  cp -a /tmp/wordpress/wp-content/. /var/www/html/wp-content
+fi
 
 #Generate wordpress configuration file
 
