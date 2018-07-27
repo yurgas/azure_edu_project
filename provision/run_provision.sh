@@ -33,6 +33,10 @@ exec 1>$CONFIG_FILE
 
 echo "<?php"
 echo
+echo "define('FORCE_SSL_ADMIN', true);"
+echo "if (strpos(\$_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false)"
+echo "  \$_SERVER['HTTPS']='on';"
+echo
 echo "define('DB_NAME', '$DB_NAME');"
 echo "define('DB_USER', '$DB_USER');"
 echo "define('DB_PASSWORD', '$DB_PASSWORD');"
@@ -52,6 +56,3 @@ echo "if ( !defined('ABSPATH') )"
 echo "	define('ABSPATH', dirname(__FILE__) . '/');"
 echo
 echo "require_once(ABSPATH . 'wp-settings.php');"
-
-echo "if (strpos(\$_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false)"
-echo "  \$_SERVER['HTTPS']='on';"
