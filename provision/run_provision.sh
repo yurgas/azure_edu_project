@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -x
 set -o errexit
 
 CONFIG_FILE=$1
