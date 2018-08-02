@@ -1,0 +1,54 @@
+{
+  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "vmSku": {
+      "value": "Standard_A1"
+    },
+    "ubuntuOSVersion": {
+      "value": "16.04-LTS"
+    },
+    "vmssName": {
+      "value": "wordpress"
+    },
+    "instanceCount": {
+      "value": 2
+    },
+    "adminUsername": {
+      "value": "wordpressadmin"
+    },
+    "sshKeyData": {
+      "value": "GEN-CUSTOM-SSH-KEY"
+    },
+    "databaseAdministratorLogin": {
+      "value": "wordpress"
+    },
+    "databaseAdministratorLoginPassword": {
+      "value": "GE#-CUST0M-PASSWORD"
+    },
+    "scriptLocation": {
+      "value": "https://raw.githubusercontent.com/yurgas/azure_edu_project/master/provision/"
+    },
+    "scriptName": {
+      "value": "run_provision.sh"
+    },
+    "certData": {
+      "value": "GEN-CUSTOM-DOMAIN-SSLCERT-PFXDATA"
+    },
+    "certPassword": {
+      "value": "GEN-CUSTOM-DOMAIN-SSLCERT-PASSWORD"
+    },
+    "CAcertData": {
+      "value": "GEN-CUSTOM-DOMAIN-SSLCERT-PFXDATA"
+    },
+    "Share": {
+      "value": "GEN-CUSTOM-SHARE-NAME"
+    },
+    "ShareAccount": {
+      "value": "GEN-CUSTOM-ACCOUNT-NAME"
+    },
+    "SharePassword": {
+      "value": "GEN-CUSTOM-SHARE-PASSWORD"
+    }
+  }
+}

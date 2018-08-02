@@ -1,0 +1,714 @@
+{
+  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "vmSku": {
+      "type": "string",
+      "defaultValue": "Standard_A1",
+      "metadata": {
+        "description": "Size of VMs in the VM Scale Set."
+      }
+    },
+    "ubuntuOSVersion": {
+      "type": "string",
+      "defaultValue": "14.04.4-LTS",
+      "allowedValues": [
+        "16.04-LTS",
+        "14.04.4-LTS"
+      ],
+      "metadata": {
+        "description": "The Ubuntu version for the VM. This will pick a fully patched image of this given Ubuntu version. Allowed values are: 16.04-LTS, 14.04.4-LTS."
+      }
+    },
+    "vmssName": {
+      "type": "string",
+      "metadata": {
+        "description": "String used as a base for naming resources. Must be 3-61 characters in length and globally unique across Azure. A hash is prepended to this string for some resources, and resource-specific information is appended."
+      },
+      "maxLength": 61
+    },
+    "instanceCount": {
+      "type": "int",
+      "metadata": {
+        "description": "Number of VM instances (100 or less)."
+      },
+      "maxValue": 4
+    },
+    "adminUsername": {
+      "type": "string",
+      "metadata": {
+        "description": "Admin username on all VMs."
+      }
+    },
+    "sshKeyData": {
+      "type": "string",
+      "metadata": {
+        "description": "SSH rsa public key file as a string."
+      }
+    },
+    "databaseAdministratorLogin": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "Database administrator login name"
+      }
+    },
+    "databaseAdministratorLoginPassword": {
+      "type": "securestring",
+      "minLength": 8,
+      "metadata": {
+        "description": "Database administrator password"
+      }
+    },
+    "databaseDTU": {
+      "type": "int",
+      "defaultValue": 2,
+      "metadata": {
+        "description": "Azure database for MySQL pricing tier"
+      }
+    },
+    "databaseSkuName": {
+      "type": "string",
+      "defaultValue": "GP_Gen4_2",
+      "metadata": {
+        "description": "Azure database for MySQL sku name "
+      }
+    },
+    "databaseSkuSizeMB": {
+      "type": "int",
+      "defaultValue": 5120,
+      "metadata": {
+        "description": "Azure database for MySQL Sku Size "
+      }
+    },
+    "databaseSkuTier": {
+      "type": "string",
+      "defaultValue": "GeneralPurpose",
+      "metadata": {
+        "description": "Azure database for MySQL pricing tier"
+      }
+    },
+    "mysqlVersion": {
+      "type": "string",
+      "allowedValues": [
+        "5.6",
+        "5.7"
+      ],
+      "defaultValue": "5.7",
+      "metadata": {
+        "description": "MySQL version"
+      }
+    },
+    "scriptLocation": {
+      "type": "string",
+      "metadata": {
+        "description": "Url on github for provisioning script location"
+      },
+      "maxLength": 254
+    },
+    "scriptName": {
+      "type": "string",
+      "metadata": {
+        "description": "Provisioning script name"
+      },
+      "maxLength": 254
+    },
+    "agSkuName": {
+      "type": "string",
+      "allowedValues": [
+        "Standard_Small",
+        "Standard_Medium",
+        "Standard_Large"
+      ],
+      "defaultValue": "Standard_Small",
+      "metadata": {
+        "description": "Application Gateway Sku Name"
+      }
+    },
+    "agCapacity": {
+      "type": "int",
+      "defaultValue": 1,
+      "metadata": {
+        "description": "Application Gateway instance count"
+      }
+    },
+    "certData": {
+      "type": "string",
+      "metadata": {
+        "description": "Application gateway base-64 encoded form of the .pfx file"
+      }
+    },
+    "certPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Application gateway password for .pfx certificate"
+      }
+    },
+    "CAcertName": {
+      "type": "string",
+      "defaultValue": "TrustedCA",
+      "metadata": {
+        "description": "CA record name"
+      }
+    },
+    "CAcertData": {
+      "type": "string",
+      "metadata": {
+        "description": "One line base64 encoded CA cert"
+      }
+    },
+    "Share": {
+      "type": "string",
+      "metadata": {
+        "description": "Share name"
+      }
+    },
+    "ShareAccount": {
+      "type": "string",
+      "metadata": {
+        "description": "Share storage account name"
+      }
+    },
+    "SharePassword": {
+      "type": "string",
+      "metadata": {
+        "description": "Share storage account key"
+      }
+    }
+  },
+  "variables": {
+    "namingInfix": "[toLower(parameters('vmssName'))]",
+    "longNamingInfix": "[concat(toLower(parameters('vmssName')),'-scale-set')]",
+    "lbName": "[concat(variables('namingInfix'), 'lb')]",
+    "lbID": "[resourceId('Microsoft.Network/loadBalancers',variables('lbName'))]",
+    "fepoolName": "[concat(variables('lbName'), 'fepool')]",
+    "bepoolName": "[concat(variables('lbName'), 'bepool')]",
+    "bepoolID": "[concat(variables('lbID'),'/backendAddressPools/', variables('bepoolName'))]",
+    "natPoolName": "[concat(variables('lbName'), 'natpool')]",
+    "feIpConfigName": "[concat(variables('fepoolName'), 'IpConfig')]",
+    "feIpConfigId": "[concat(variables('lbID'),'/frontendIPConfigurations/', variables('feIpConfigName'))]",
+    "httpProbeName": "httpProbe",
+    "httpsProbeName": "httpsProbe",
+    "storageAccountType": "Standard_LRS",
+    "newStorageAccountSuffix": "[concat(variables('namingInfix'), 'sa')]",
+    "addressPrefix": "10.0.0.0/16",
+    "subnetPrefix": "10.0.0.0/24",
+    "virtualNetworkName": "[concat(variables('namingInfix'), 'vnet')]",
+    "subnetName": "[concat(variables('namingInfix'), 'subnet')]",
+    "subnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('virtualNetworkName'), variables('subnetName'))]",
+    "publicIPAddressName": "[concat(variables('namingInfix'), 'pip')]",
+    "publicIPRef": "[resourceId('Microsoft.Network/publicIPAddresses',variables('publicIPAddressName'))]",
+    "nicName": "[concat(variables('namingInfix'), 'nic')]",
+    "ipConfigName": "[concat(variables('namingInfix'), 'ipconfig')]",
+    "osType": {
+      "publisher": "Canonical",
+      "offer": "UbuntuServer",
+      "sku": "[parameters('ubuntuOSVersion')]",
+      "version": "latest"
+    },
+    "imageReference": "[variables('osType')]",
+    "sshKeyPath": "[concat('/home/',parameters('adminUsername'),'/.ssh/authorized_keys')]",
+    "databaseName": "[concat(variables('namingInfix'), 'database')]",
+    "databaseServerName": "[concat(variables('namingInfix'), 'edumysqlserver01')]",
+    "databaseFullHostName": "[concat(variables('databaseServerName'), '.mysql.database.azure.com')]",
+    "quote": "'",
+    "wpConfigLocation": "/var/www/html/wp-config.php",
+    "agName": "[concat(variables('namingInfix'), 'applicationgateway')]",
+    "agPublicIPAddressName": "[concat(variables('namingInfix'), 'pip-ag')]",
+    "agPublicIPRef": "[resourceId('Microsoft.Network/publicIPAddresses',variables('agPublicIPAddressName'))]",
+    "applicationGatewayID": "[resourceId('Microsoft.Network/applicationGateways',variables('agName'))]",
+    "appGwBePoolName": "[concat(variables('namingInfix'), 'appGwBepool')]",
+    "appGwSubnetName": "[concat(variables('namingInfix'),'appGwSubnet')]",
+    "appGwSubnetPrefix": "10.0.1.0/24",
+    "appGwSubnetID": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('virtualNetworkName'), variables('appGwSubnetName'))]",
+    "GatewaySubnetPrefix": "10.0.3.0/24",
+    "vpnGwName": "[concat(variables('namingInfix'), 'vpngw')]",
+    "vpnGwPublicIPAddressName": "[concat(variables('namingInfix'), 'pip-vpngw')]",
+    "vpnClientSubnet": "172.16.1.0/24",
+    "autoscaleName": "[concat(variables('namingInfix'),'autoscale')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "name": "[variables('virtualNetworkName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-04-01",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[variables('addressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('subnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('subnetPrefix')]",
+              "serviceEndpoints": [
+                {
+                  "service": "Microsoft.Sql",
+                  "locations": [
+                    "eastus"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "name": "[variables('appGwSubnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('appGwSubnetPrefix')]"
+            }
+          },
+          {
+            "name": "GatewaySubnet",
+            "properties": {
+              "addressPrefix": "[variables('GatewaySubnetPrefix')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('publicIPAddressName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-04-01",
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('longNamingInfix')]"
+        }
+      }
+    },
+    {
+      "apiVersion": "2017-06-01",
+      "name": "[variables('agName')]",
+      "type": "Microsoft.Network/applicationGateways",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]"
+      ],
+      "properties": {
+        "sku": {
+          "name": "[parameters('agSkuName')]",
+          "tier": "Standard",
+          "capacity": "[parameters('agCapacity')]"
+        },
+        "sslCertificates": [
+          {
+            "name": "appGatewaySslCert",
+            "properties": {
+              "data": "[parameters('certData')]",
+              "password": "[parameters('certPassword')]"
+            }
+          }
+        ],
+        "gatewayIPConfigurations": [
+          {
+            "name": "appGatewayIpConfig",
+            "properties": {
+              "subnet": {
+                "id": "[variables('appGwSubnetID')]"
+              }
+            }
+          }
+        ],
+        "frontendIPConfigurations": [
+          {
+            "name": "appGatewayFrontendIP",
+            "properties": {
+              "PublicIPAddress": {
+                "id": "[variables('publicIPRef')]"
+              }
+            }
+          }
+        ],
+        "frontendPorts": [
+          {
+            "name": "appGatewayFrontendHttpPort1",
+            "properties": {
+              "Port": 80
+            }
+          },
+          {
+            "name": "appGatewayFrontendHttpsPort1",
+            "properties": {
+              "Port": 443
+            }
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "[variables('appGwBePoolName')]"
+          }
+        ],
+        "backendHttpSettingsCollection": [
+          {
+            "name": "appGatewayBackendHttpSettings",
+            "properties": {
+              "Port": 80,
+              "Protocol": "Http",
+              "requestTimeout": 5
+            }
+          }
+        ],
+        "httpListeners": [
+          {
+            "name": "appGatewayHttpListener1",
+            "properties": {
+              "FrontendIPConfiguration": {
+                "Id": "[concat(variables('applicationGatewayID'), '/frontendIPConfigurations/appGatewayFrontendIP')]"
+              },
+              "FrontendPort": {
+                "Id": "[concat(variables('applicationGatewayID'), '/frontendPorts/appGatewayFrontendHttpPort1')]"
+              },
+              "Protocol": "Http"
+            }
+          },
+          {
+            "name": "appGatewayHttpsListener1",
+            "properties": {
+              "FrontendIPConfiguration": {
+                "Id": "[concat(variables('applicationGatewayID'), '/frontendIPConfigurations/appGatewayFrontendIP')]"
+              },
+              "FrontendPort": {
+                "Id": "[concat(variables('applicationGatewayID'), '/frontendPorts/appGatewayFrontendHttpsPort1')]"
+              },
+              "Protocol": "Https",
+              "SslCertificate": {
+                "Id": "[concat(variables('applicationGatewayID'), '/sslCertificates/appGatewaySslCert')]"
+              }
+            }
+          }
+        ],
+        "redirectConfigurations": [
+          {
+            "Name": "redirectConfig1",
+            "properties": {
+              "redirectType": "Temporary",
+              "targetListener": {
+                "id": "[concat(variables('applicationGatewayID'), '/httpListeners/appGatewayHttpsListener1')]"
+              }
+            }
+          }
+        ],
+        "requestRoutingRules": [
+          {
+            "Name": "rule1",
+            "properties": {
+              "RuleType": "Basic",
+              "httpListener": {
+                "id": "[concat(variables('applicationGatewayID'), '/httpListeners/appGatewayHttpListener1')]"
+              },
+              "redirectConfiguration": {
+                "id": "[concat(variables('applicationGatewayID'), '/redirectConfigurations/redirectConfig1')]"
+              }
+            }
+          },
+          {
+            "Name": "rule2",
+            "properties": {
+              "RuleType": "Basic",
+              "httpListener": {
+                "id": "[concat(variables('applicationGatewayID'), '/httpListeners/appGatewayHttpsListener1')]"
+              },
+              "backendAddressPool": {
+                "id": "[concat(variables('applicationGatewayID'), '/backendAddressPools/', variables('appGwBePoolName'))]"
+              },
+              "backendHttpSettings": {
+                "id": "[concat(variables('applicationGatewayID'), '/backendHttpSettingsCollection/appGatewayBackendHttpSettings')]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachineScaleSets",
+      "name": "[variables('namingInfix')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-03-30",
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+        "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'),'/databases/' , variables('databaseName'))]",
+        "[concat('Microsoft.Network/applicationGateways/', variables('agName'))]"
+      ],
+      "sku": {
+        "name": "[parameters('vmSku')]",
+        "tier": "Standard",
+        "capacity": "[parameters('instanceCount')]"
+      },
+      "properties": {
+        "overprovision": "true",
+        "upgradePolicy": {
+          "mode": "Manual"
+        },
+        "virtualMachineProfile": {
+          "storageProfile": {
+            "osDisk": {
+              "createOption": "FromImage"
+            },
+            "imageReference": "[variables('imageReference')]"
+          },
+          "osProfile": {
+            "computerNamePrefix": "[variables('namingInfix')]",
+            "adminUsername": "[parameters('adminUsername')]",
+            "linuxConfiguration": {
+              "disablePasswordAuthentication": true,
+              "ssh": {
+                "publicKeys": [
+                  {
+                    "path": "[variables('sshKeyPath')]",
+                    "keyData": "[parameters('sshKeyData')]"
+                  }
+                ]
+              }
+            }
+          },
+          "networkProfile": {
+            "networkInterfaceConfigurations": [
+              {
+                "name": "[variables('nicName')]",
+                "properties": {
+                  "primary": true,
+                  "ipConfigurations": [
+                    {
+                      "name": "[variables('ipConfigName')]",
+                      "properties": {
+                        "subnet": {
+                          "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'), '/subnets/', variables('subnetName'))]"
+                        },
+                        "ApplicationGatewayBackendAddressPools": [
+                          {
+                            "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Network/applicationGateways/', variables('agName'), '/backendAddressPools/', variables('appGwBePoolName'))]"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "extensionProfile": {
+            "extensions": [
+              {
+                "name": "config-host",
+                "properties": {
+                  "publisher": "Microsoft.Azure.Extensions",
+                  "type": "CustomScript",
+                  "typeHandlerVersion": "2.0",
+                  "autoUpgradeMinorVersion": true,
+                  "settings": {
+                    "fileUris": [
+                      "[concat(parameters('scriptLocation'), parameters('scriptName'))]"
+                    ]
+                  },
+                  "protectedSettings": {
+                    "commandToExecute": "[concat('bash ',parameters('scriptName'),' ',variables('quote'),variables('wpConfigLocation'),variables('quote'),' ',variables('databaseName'),' ',variables('quote'),parameters('databaseAdministratorLogin'),'@',variables('databaseServerName'),variables('quote'),' ',parameters('databaseAdministratorLoginPassword'),' ',variables('databaseFullHostName'),' ',parameters('ShareAccount'),' ',parameters('SharePassword'),' ',parameters('Share'))]"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Insights/autoscaleSettings",
+      "apiVersion": "2015-04-01",
+      "name": "[variables('autoscaleName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Compute/virtualMachineScaleSets/', variables('namingInfix'))]"
+      ],
+      "properties": {
+        "name": "[variables('autoscaleName')]",
+        "targetResourceUri": "[concat('/subscriptions/',subscription().subscriptionId, '/resourceGroups/',  resourceGroup().name, '/providers/Microsoft.Compute/virtualMachineScaleSets/', variables('namingInfix'))]",
+        "enabled": true,
+        "profiles": [
+          {
+            "name": "Profile1",
+            "capacity": {
+              "minimum": "1",
+              "maximum": "4",
+              "default": "2"
+            },
+            "rules": [
+              {
+                "metricTrigger": {
+                  "metricName": "Percentage CPU",
+                  "metricNamespace": "",
+                  "metricResourceUri": "[concat('/subscriptions/',subscription().subscriptionId, '/resourceGroups/',  resourceGroup().name, '/providers/Microsoft.Compute/virtualMachineScaleSets/', variables('namingInfix'))]",
+                  "timeGrain": "PT1M",
+                  "statistic": "Average",
+                  "timeWindow": "PT5M",
+                  "timeAggregation": "Average",
+                  "operator": "GreaterThan",
+                  "threshold": 70
+                },
+                "scaleAction": {
+                  "direction": "Increase",
+                  "type": "ChangeCount",
+                  "value": "1",
+                  "cooldown": "PT1M"
+                }
+              },
+              {
+                "metricTrigger": {
+                  "metricName": "Percentage CPU",
+                  "metricNamespace": "",
+                  "metricResourceUri": "[concat('/subscriptions/',subscription().subscriptionId, '/resourceGroups/',  resourceGroup().name, '/providers/Microsoft.Compute/virtualMachineScaleSets/', variables('namingInfix'))]",
+                  "timeGrain": "PT1M",
+                  "statistic": "Average",
+                  "timeWindow": "PT5M",
+                  "timeAggregation": "Average",
+                  "operator": "LessThan",
+                  "threshold": 40
+                },
+                "scaleAction": {
+                  "direction": "Decrease",
+                  "type": "ChangeCount",
+                  "value": "1",
+                  "cooldown": "PT5M"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.DBforMySQL/servers",
+      "apiVersion": "2017-12-01-preview",
+      "location": "[resourceGroup().location]",
+      "name": "[variables('databaseServerName')]",
+      "properties": {
+        "version": "[parameters('mysqlVersion')]",
+        "administratorLogin": "[parameters('databaseAdministratorLogin')]",
+        "administratorLoginPassword": "[parameters('databaseAdministratorLoginPassword')]",
+        "storageProfile": {
+          "storageMB": "[parameters('databaseSkuSizeMB')]",
+          "backupRetentionDays": "7",
+          "geoRedundantBackup": "Disabled"
+        },
+        "sslEnforcement": "Disabled"
+      },
+      "sku": {
+        "name": "[parameters('databaseSkuName')]",
+        "tier": "[parameters('databaseSkuTier')]",
+        "capacity": "[parameters('databaseDTU')]",
+        "size": "[parameters('databaseSkuSizeMB')]",
+        "family": "Gen4"
+      },
+      "resources": [
+        {
+          "type": "firewallrules",
+          "apiVersion": "2017-12-01-preview",
+          "dependsOn": [
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'),'/databases/' , variables('databaseName'))]",
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'))]"
+          ],
+          "location": "[resourceGroup().location]",
+          "name": "AllowAzureIPs",
+          "properties": {
+            "startIpAddress": "10.0.0.0",
+            "endIpAddress": "10.0.0.255"
+          }
+        },
+        {
+          "name": "vnrule1",
+          "type": "virtualnetworkrules",
+          "apiVersion": "2017-12-01-preview",
+          "dependsOn": [
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'),'/databases/' , variables('databaseName'))]",
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'))]"
+          ],
+          "location": "[resourceGroup().location]",
+          "properties": {
+            "virtualNetworkSubnetId": "[variables('subnetRef')]",
+            "ignoreMissingVnetServiceEndpoint": false
+          }
+        },
+        {
+          "name": "[variables('databaseName')]",
+          "type": "databases",
+          "apiVersion": "2017-12-01-preview",
+          "properties": {
+            "charset": "utf8",
+            "collation": "utf8_general_ci"
+          },
+          "dependsOn": [
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'))]"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('vpnGwPublicIPAddressName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-04-01",
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic"
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworkGateways",
+      "name": "[variables('vpnGwName')]",
+      "apiVersion": "2018-02-01",
+      "location": "[resourceGroup().location]",
+      "scale": null,
+      "properties": {
+          "ipConfigurations": [
+              {
+                  "name": "default",
+                  "properties": {
+                      "privateIPAllocationMethod": "Dynamic",
+                      "publicIPAddress": {
+                          "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('vpnGwPublicIPAddressName'))]"
+                      },
+                      "subnet": {
+                          "id": "[concat(resourceId('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName')), '/subnets/GatewaySubnet')]"
+                      }
+                  }
+              }
+          ],
+          "sku": {
+              "name": "VpnGw1",
+              "tier": "VpnGw1",
+              "capacity": 2
+          },
+          "gatewayType": "Vpn",
+          "vpnType": "RouteBased",
+          "enableBgp": false,
+          "activeActive": false,
+          "vpnClientConfiguration": {
+              "vpnClientAddressPool": {
+                  "addressPrefixes": [
+                      "[variables('vpnClientSubnet')]"
+                  ]
+              },
+              "vpnClientProtocols": [
+                  "SSTP",
+                  "IkeV2"
+              ],
+              "vpnClientRootCertificates": [
+                  {
+                      "name": "[parameters('CAcertName')]",
+                      "properties": {
+                          "publicCertData": "[parameters('CAcertData')]"
+                      }
+                  }
+              ]
+          }
+      },
+      "dependsOn": [
+          "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]",
+          "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+      ]
+    }
+  ]
+}

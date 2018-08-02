@@ -1,0 +1,454 @@
+{
+  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "vmSku": {
+      "type": "string",
+      "defaultValue": "Standard_A1",
+      "metadata": {
+        "description": "Size of VMs in the VM Scale Set."
+      }
+    },
+    "ubuntuOSVersion": {
+      "type": "string",
+      "defaultValue": "14.04.4-LTS",
+      "allowedValues": [
+        "16.04-LTS",
+        "14.04.4-LTS"
+      ],
+      "metadata": {
+        "description": "The Ubuntu version for the VM. This will pick a fully patched image of this given Ubuntu version. Allowed values are: 16.04-LTS, 14.04.4-LTS."
+      }
+    },
+    "vmssName": {
+      "type": "string",
+      "metadata": {
+        "description": "String used as a base for naming resources. Must be 3-61 characters in length and globally unique across Azure. A hash is prepended to this string for some resources, and resource-specific information is appended."
+      },
+      "maxLength": 61
+    },
+    "instanceCount": {
+      "type": "int",
+      "metadata": {
+        "description": "Number of VM instances (100 or less)."
+      },
+      "maxValue": 2
+    },
+    "adminUsername": {
+      "type": "string",
+      "metadata": {
+        "description": "Admin username on all VMs."
+      }
+    },
+    "sshKeyData": {
+      "type": "string",
+      "metadata": {
+        "description": "SSH rsa public key file as a string."
+      }
+    },
+    "databaseAdministratorLogin": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "Database administrator login name"
+      }
+    },
+    "databaseAdministratorLoginPassword": {
+      "type": "securestring",
+      "minLength": 8,
+      "metadata": {
+        "description": "Database administrator password"
+      }
+    },
+    "databaseDTU": {
+      "type": "int",
+      "defaultValue": 2,
+      "metadata": {
+        "description": "Azure database for MySQL pricing tier"
+      }
+    },
+    "databaseSkuName": {
+      "type": "string",
+      "defaultValue": "GP_Gen4_2",
+      "metadata": {
+        "description": "Azure database for MySQL sku name "
+      }
+    },
+    "databaseSkuSizeMB": {
+      "type": "int",
+      "defaultValue": 5120,
+      "metadata": {
+        "description": "Azure database for MySQL Sku Size "
+      }
+    },
+    "databaseSkuTier": {
+      "type": "string",
+      "defaultValue": "GeneralPurpose",
+      "metadata": {
+        "description": "Azure database for MySQL pricing tier"
+      }
+    },
+    "mysqlVersion": {
+      "type": "string",
+      "allowedValues": [
+        "5.6",
+        "5.7"
+      ],
+      "defaultValue": "5.7",
+      "metadata": {
+        "description": "MySQL version"
+      }
+    },
+    "scriptLocation": {
+      "type": "string",
+      "metadata": {
+        "description": "Url on github for provisioning script location"
+      },
+      "maxLength": 254
+    },
+    "scriptName": {
+      "type": "string",
+      "metadata": {
+        "description": "Provisioning script name"
+      },
+      "maxLength": 254
+    }
+  },
+  "variables": {
+    "namingInfix": "[toLower(substring(concat(parameters('vmssName'), uniqueString(resourceGroup().id)), 0, 9))]",
+    "longNamingInfix": "[toLower(parameters('vmssName'))]",
+    "baseImageName": "[concat(variables('namingInfix'), 'baseimage')]",
+    "baseImageSAName": "[concat(uniqueString(concat(resourceGroup().id, variables('newStorageAccountSuffix'), 'baseImagesa')), 'jb')]",
+    "baseImageOSDiskName": "[concat(variables('baseImageName'), 'osdisk')]",
+    "baseImageVHDContainerName": "[concat(variables('baseImageName'), 'vhd')]",
+    "baseImageIPConfigName": "[concat(variables('baseImageName'), 'ipconfig')]",
+    "baseImageNicName": "[concat(variables('baseImageName'), 'nic')]",
+    "lbName": "[concat(variables('namingInfix'), 'lb')]",
+    "lbID": "[resourceId('Microsoft.Network/loadBalancers',variables('lbName'))]",
+    "fepoolName": "[concat(variables('lbName'), 'fepool')]",
+    "bepoolName": "[concat(variables('lbName'), 'bepool')]",
+    "bepoolID": "[concat(variables('lbID'),'/backendAddressPools/', variables('bepoolName'))]",
+    "natPoolName": "[concat(variables('lbName'), 'natpool')]",
+    "feIpConfigName": "[concat(variables('fepoolName'), 'IpConfig')]",
+    "feIpConfigId": "[concat(variables('lbID'),'/frontendIPConfigurations/', variables('feIpConfigName'))]",
+    "httpProbeName": "httpProbe",
+    "httpsProbeName": "httpsProbe",
+    "storageAccountType": "Standard_LRS",
+    "newStorageAccountSuffix": "[concat(variables('namingInfix'), 'sa')]",
+    "addressPrefix": "10.0.0.0/16",
+    "subnetPrefix": "10.0.0.0/24",
+    "virtualNetworkName": "[concat(variables('namingInfix'), 'vnet')]",
+    "subnetName": "[concat(variables('namingInfix'), 'subnet')]",
+    "subnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('virtualNetworkName'), variables('subnetName'))]",
+    "publicIPAddressName": "[concat(variables('namingInfix'), 'pip')]",
+    "nicName": "[concat(variables('namingInfix'), 'nic')]",
+    "ipConfigName": "[concat(variables('namingInfix'), 'ipconfig')]",
+    "osType": {
+      "publisher": "Canonical",
+      "offer": "UbuntuServer",
+      "sku": "[parameters('ubuntuOSVersion')]",
+      "version": "latest"
+    },
+    "imageReference": "[variables('osType')]",
+    "sshKeyPath": "[concat('/home/',parameters('adminUsername'),'/.ssh/authorized_keys')]",
+    "databaseName": "[concat(variables('namingInfix'), 'database')]",
+    "databaseServerName": "[concat(variables('namingInfix'), 'edumysqlserver01')]",
+    "databaseFullHostName": "[concat(variables('databaseServerName'), '.mysql.database.azure.com')]",
+    "quote": "'",
+    "wpConfigLocation": "/var/www/html/wp-config.php"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "name": "[variables('virtualNetworkName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-04-01",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[variables('addressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('subnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('subnetPrefix')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('publicIPAddressName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-04-01",
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('longNamingInfix')]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/loadBalancers",
+      "name": "[variables('lbName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2016-03-30",
+      "dependsOn": [
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]"
+      ],
+      "tags": {
+        "displayName": "Load Balancer"
+      },
+      "properties": {
+        "frontendIPConfigurations": [
+          {
+            "name": "[variables('feIpConfigName')]",
+            "properties": {
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('publicIPAddressName'))]"
+              }
+            }
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "[variables('bepoolName')]"
+          }
+        ],
+        "inboundNatPools": [
+          {
+            "name": "[variables('natPoolName')]",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[variables('feIpConfigId')]"
+              },
+              "protocol": "tcp",
+              "frontendPortRangeStart": 10022,
+              "frontendPortRangeEnd": 10030,
+              "backendPort": 22
+            }
+          }
+        ],
+        "loadBalancingRules": [
+          {
+            "name": "HTTPRule",
+            "properties": {
+              "loadDistribution": "Default",
+              "frontendIPConfiguration": {
+                "id": "[variables('feIpConfigId')]"
+              },
+              "backendAddressPool": {
+                "id": "[variables('bepoolID')]"
+              },
+              "protocol": "Tcp",
+              "frontendPort": 80,
+              "backendPort": 80,
+              "enableFloatingIP": false,
+              "idleTimeoutInMinutes": 5,
+              "probe": {
+                "id": "[concat(variables('lbId'), '/probes/', variables('httpProbeName'))]"
+              }
+            }
+          },
+          {
+            "name": "HTTPSRule",
+            "properties": {
+              "loadDistribution": "Default",
+              "frontendIPConfiguration": {
+                "id": "[variables('feIpConfigId')]"
+              },
+              "backendAddressPool": {
+                "id": "[variables('bepoolId')]"
+              },
+              "protocol": "Tcp",
+              "frontendPort": 443,
+              "backendPort": 443,
+              "enableFloatingIP": false,
+              "idleTimeoutInMinutes": 5,
+              "probe": {
+                "id": "[concat(variables('lbId'), '/probes/', variables('httpsProbeName'))]"
+              }
+            }
+          }
+        ],
+        "probes": [
+          {
+            "name": "[variables('httpProbeName')]",
+            "properties": {
+              "protocol": "Tcp",
+              "port": 80,
+              "intervalInSeconds": 5,
+              "numberOfProbes": 2
+            }
+          },
+          {
+            "name": "[variables('httpsProbeName')]",
+            "properties": {
+              "protocol": "Tcp",
+              "port": 443,
+              "intervalInSeconds": 5,
+              "numberOfProbes": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachineScaleSets",
+      "name": "[variables('namingInfix')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-03-30",
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+        "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'),'/databases/' , variables('databaseName'))]",
+        "[concat('Microsoft.Network/loadBalancers/', variables('lbName'))]"
+      ],
+      "sku": {
+        "name": "[parameters('vmSku')]",
+        "tier": "Standard",
+        "capacity": "[parameters('instanceCount')]"
+      },
+      "properties": {
+        "overprovision": "true",
+        "upgradePolicy": {
+          "mode": "Manual"
+        },
+        "virtualMachineProfile": {
+          "storageProfile": {
+            "osDisk": {
+              "createOption": "FromImage"
+            },
+            "imageReference": "[variables('imageReference')]"
+          },
+          "osProfile": {
+            "computerNamePrefix": "[variables('namingInfix')]",
+            "adminUsername": "[parameters('adminUsername')]",
+            "linuxConfiguration": {
+              "disablePasswordAuthentication": true,
+              "ssh": {
+                "publicKeys": [
+                  {
+                    "path": "[variables('sshKeyPath')]",
+                    "keyData": "[parameters('sshKeyData')]"
+                  }
+                ]
+              }
+            }
+          },
+          "networkProfile": {
+            "networkInterfaceConfigurations": [
+              {
+                "name": "[variables('nicName')]",
+                "properties": {
+                  "primary": true,
+                  "ipConfigurations": [
+                    {
+                      "name": "[variables('ipConfigName')]",
+                      "properties": {
+                        "subnet": {
+                          "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'), '/subnets/', variables('subnetName'))]"
+                        },
+                        "loadBalancerBackendAddressPools": [
+                          {
+                            "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', variables('lbName'), variables('bePoolName'))]"
+                          }
+                        ],
+                        "loadBalancerInboundNatPools": [
+                          {
+                            "id": "[resourceId('Microsoft.Network/loadBalancers/inboundNatPools', variables('lbName'), variables('natPoolName'))]"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "extensionProfile": {
+            "extensions": [
+              {
+                "name": "config-host",
+                "properties": {
+                  "publisher": "Microsoft.Azure.Extensions",
+                  "type": "CustomScript",
+                  "typeHandlerVersion": "2.0",
+                  "autoUpgradeMinorVersion": true,
+                  "settings": {
+                    "fileUris": [
+                      "[concat(parameters('scriptLocation'), parameters('scriptName'))]"
+                    ]
+                  },
+                  "protectedSettings": {
+                    "commandToExecute": "[concat('bash ',parameters('scriptName'),' ',variables('quote'),variables('wpConfigLocation'),variables('quote'),' ',variables('databaseName'),' ',variables('quote'),parameters('databaseAdministratorLogin'),'@',variables('databaseServerName'),variables('quote'),' ',parameters('databaseAdministratorLoginPassword'),' ',variables('databaseFullHostName'))]"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "2017-12-01-preview",
+      "location": "[resourceGroup().location]",
+      "name": "[variables('databaseServerName')]",
+      "properties": {
+        "version": "[parameters('mysqlVersion')]",
+        "administratorLogin": "[parameters('databaseAdministratorLogin')]",
+        "administratorLoginPassword": "[parameters('databaseAdministratorLoginPassword')]",
+        "storageProfile": {
+          "storageMB": "[parameters('databaseSkuSizeMB')]",
+          "backupRetentionDays": "7",
+          "geoRedundantBackup": "Disabled"
+        },
+        "sslEnforcement": "Disabled"
+      },
+      "sku": {
+        "name": "[parameters('databaseSkuName')]",
+        "tier": "[parameters('databaseSkuTier')]",
+        "capacity": "[parameters('databaseDTU')]",
+        "size": "[parameters('databaseSkuSizeMB')]",
+        "family": "Gen4"
+      },
+      "type": "Microsoft.DBforMySQL/servers",
+      "resources": [
+        {
+          "type": "firewallrules",
+          "apiVersion": "2017-12-01-preview",
+          "dependsOn": [
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'),'/databases/' , variables('databaseName'))]",
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'))]"
+          ],
+          "location": "[resourceGroup().location]",
+          "name": "AllowAzureIPs",
+          "properties": {
+            "startIpAddress": "0.0.0.0",
+            "endIpAddress": "0.0.0.0"
+          }
+        },
+        {
+          "name": "[variables('databaseName')]",
+          "type": "databases",
+          "apiVersion": "2017-12-01-preview",
+          "properties": {
+            "charset": "utf8",
+            "collation": "utf8_general_ci"
+          },
+          "dependsOn": [
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'))]"
+          ]
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "sshCommand": {
+      "type": "string",
+      "value": "[concat('ssh ', parameters('adminUsername'), '@', variables('longNamingInfix'), '.', resourceGroup().location, '.cloudapp.azure.com')]"
+    }
+  }
+}

@@ -1,0 +1,348 @@
+{
+  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "vmSku": {
+      "type": "string",
+      "defaultValue": "Standard_A1",
+      "metadata": {
+        "description": "Size of VMs in the VM Scale Set."
+      }
+    },
+    "ubuntuOSVersion": {
+      "type": "string",
+      "defaultValue": "14.04.4-LTS",
+      "allowedValues": [
+        "16.04-LTS",
+        "14.04.4-LTS"
+      ],
+      "metadata": {
+        "description": "The Ubuntu version for the VM. This will pick a fully patched image of this given Ubuntu version. Allowed values are: 16.04-LTS, 14.04.4-LTS."
+      }
+    },
+    "vmssName": {
+      "type": "string",
+      "metadata": {
+        "description": "String used as a base for naming resources. Must be 3-61 characters in length and globally unique across Azure. A hash is prepended to this string for some resources, and resource-specific information is appended."
+      },
+      "maxLength": 61
+    },
+    "adminUsername": {
+      "type": "string",
+      "metadata": {
+        "description": "Admin username on all VMs."
+      }
+    },
+    "sshKeyData": {
+      "type": "string",
+      "metadata": {
+        "description": "SSH rsa public key file as a string."
+      }
+    },
+    "databaseAdministratorLogin": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "Database administrator login name"
+      }
+    },
+    "databaseAdministratorLoginPassword": {
+      "type": "securestring",
+      "minLength": 8,
+      "metadata": {
+        "description": "Database administrator password"
+      }
+    },
+    "databaseDTU": {
+      "type": "int",
+      "defaultValue": 2,
+      "metadata": {
+        "description": "Azure database for MySQL pricing tier"
+      }
+    },
+    "databaseSkuName": {
+      "type": "string",
+      "defaultValue": "GP_Gen4_2",
+      "metadata": {
+        "description": "Azure database for MySQL sku name "
+      }
+    },
+    "databaseSkuSizeMB": {
+      "type": "int",
+      "defaultValue": 5120,
+      "metadata": {
+        "description": "Azure database for MySQL Sku Size "
+      }
+    },
+    "databaseSkuTier": {
+      "type": "string",
+      "defaultValue": "GeneralPurpose",
+      "metadata": {
+        "description": "Azure database for MySQL pricing tier"
+      }
+    },
+    "mysqlVersion": {
+      "type": "string",
+      "allowedValues": [
+        "5.6",
+        "5.7"
+      ],
+      "defaultValue": "5.7",
+      "metadata": {
+        "description": "MySQL version"
+      }
+    },
+    "scriptLocation": {
+      "type": "string",
+      "metadata": {
+        "description": "Url on github for provisioning script location"
+      },
+      "maxLength": 254
+    },
+    "scriptName": {
+      "type": "string",
+      "metadata": {
+        "description": "Provisioning script name"
+      },
+      "maxLength": 254
+    }
+  },
+  "variables": {
+    "namingInfix": "[toLower(substring(concat(parameters('vmssName'), uniqueString(resourceGroup().id)), 0, 9))]",
+    "longNamingInfix": "[toLower(parameters('vmssName'))]",
+    "baseImageName": "[concat(variables('namingInfix'), 'baseimage')]",
+    "baseImageSAName": "[concat(uniqueString(concat(resourceGroup().id, variables('newStorageAccountSuffix'), 'baseImagesa')), 'jb')]",
+    "baseImageOSDiskName": "[concat(variables('baseImageName'), 'osdisk')]",
+    "baseImageVHDContainerName": "[concat(variables('baseImageName'), 'vhd')]",
+    "baseImageIPConfigName": "[concat(variables('baseImageName'), 'ipconfig')]",
+    "baseImageNicName": "[concat(variables('baseImageName'), 'nic')]",
+    "storageAccountType": "Standard_LRS",
+    "newStorageAccountSuffix": "[concat(variables('namingInfix'), 'sa')]",
+    "addressPrefix": "10.0.0.0/16",
+    "subnetPrefix": "10.0.0.0/24",
+    "virtualNetworkName": "[concat(variables('namingInfix'), 'vnet')]",
+    "subnetName": "[concat(variables('namingInfix'), 'subnet')]",
+    "subnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('virtualNetworkName'), variables('subnetName'))]",
+    "publicIPAddressName": "[concat(variables('namingInfix'), 'pip')]",
+    "nicName": "[concat(variables('namingInfix'), 'nic')]",
+    "ipConfigName": "[concat(variables('namingInfix'), 'ipconfig')]",
+    "osType": {
+      "publisher": "Canonical",
+      "offer": "UbuntuServer",
+      "sku": "[parameters('ubuntuOSVersion')]",
+      "version": "latest"
+    },
+    "imageReference": "[variables('osType')]",
+    "sshKeyPath": "[concat('/home/',parameters('adminUsername'),'/.ssh/authorized_keys')]",
+    "databaseName": "[concat(variables('namingInfix'), 'database')]",
+    "databaseServerName": "[concat(variables('namingInfix'), 'edumysqlserver01')]",
+    "databaseFullHostName": "[concat(variables('databaseServerName'), '.mysql.database.azure.com')]",
+    "quote": "'",
+    "wpConfigLocation": "/var/www/html/wp-config.php"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "name": "[variables('virtualNetworkName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-04-01",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[variables('addressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('subnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('subnetPrefix')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[variables('baseImageSAName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "properties": {
+        "accountType": "[variables('storageAccountType')]"
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('publicIPAddressName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-04-01",
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('longNamingInfix')]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[variables('baseImageNicName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-04-01",
+      "dependsOn": [
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]",
+        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "[variables('baseImageIPConfigName')]",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('publicIPAddressName'))]"
+              },
+              "subnet": {
+                "id": "[variables('subnetRef')]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "[variables('baseImageName')]",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2017-03-30",
+      "dependsOn": [
+        "[concat('Microsoft.Storage/storageAccounts/', variables('baseImageSAName'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('baseImageNicName'))]",
+        "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'),'/databases/' , variables('databaseName'))]"
+      ],
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('vmSku')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('baseImageName')]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": true,
+            "ssh": {
+              "publicKeys": [
+                {
+                  "path": "[variables('sshKeyPath')]",
+                  "keyData": "[parameters('sshKeyData')]"
+                }
+              ]
+            }
+          }
+        },
+        "storageProfile": {
+          "imageReference": "[variables('imageReference')]",
+          "osDisk": {
+            "name": "[concat(variables('baseImageOSDiskName'),'_OSDisk')]",
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces',variables('baseImageNicName'))]"
+            }
+          ]
+        },
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": "true",
+            "storageUri": "[concat('http://',variables('baseImageSAName'),'.blob.core.windows.net')]"
+          }
+        }
+      },
+      "resources": [
+        {
+          "apiVersion": "2015-06-15",
+          "type": "extensions",
+          "name": "config-host",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[concat('Microsoft.Compute/virtualMachines/', variables('baseImageName'))]"
+          ],
+          "properties": {
+            "publisher": "Microsoft.Azure.Extensions",
+            "type": "CustomScript",
+            "typeHandlerVersion": "2.0",
+            "autoUpgradeMinorVersion": true,
+            "settings": {
+              "fileUris": [
+                "[concat(parameters('scriptLocation'), parameters('scriptName'))]"
+              ]
+            },
+            "protectedSettings": {
+              "commandToExecute": "[concat('bash ',parameters('scriptName'),' ',variables('quote'),variables('wpConfigLocation'),variables('quote'),' ',variables('databaseName'),' ',variables('quote'),parameters('databaseAdministratorLogin'),'@',variables('databaseServerName'),variables('quote'),' ',parameters('databaseAdministratorLoginPassword'),' ',variables('databaseFullHostName'))]"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apiVersion": "2017-12-01-preview",
+      "location": "[resourceGroup().location]",
+      "name": "[variables('databaseServerName')]",
+      "properties": {
+        "version": "[parameters('mysqlVersion')]",
+        "administratorLogin": "[parameters('databaseAdministratorLogin')]",
+        "administratorLoginPassword": "[parameters('databaseAdministratorLoginPassword')]",
+        "storageProfile": {
+          "storageMB": "[parameters('databaseSkuSizeMB')]",
+          "backupRetentionDays": "7",
+          "geoRedundantBackup": "Disabled"
+        },
+        "sslEnforcement": "Disabled"
+      },
+      "sku": {
+        "name": "[parameters('databaseSkuName')]",
+        "tier": "[parameters('databaseSkuTier')]",
+        "capacity": "[parameters('databaseDTU')]",
+        "size": "[parameters('databaseSkuSizeMB')]",
+        "family": "Gen4"
+      },
+      "type": "Microsoft.DBforMySQL/servers",
+      "resources": [
+        {
+          "type": "firewallrules",
+          "apiVersion": "2017-12-01-preview",
+          "dependsOn": [
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'),'/databases/' , variables('databaseName'))]",
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'))]"
+          ],
+          "location": "[resourceGroup().location]",
+          "name": "AllowAzureIPs",
+          "properties": {
+            "startIpAddress": "0.0.0.0",
+            "endIpAddress": "0.0.0.0"
+          }
+        },
+        {
+          "name": "[variables('databaseName')]",
+          "type": "databases",
+          "apiVersion": "2017-12-01-preview",
+          "properties": {
+            "charset": "utf8",
+            "collation": "utf8_general_ci"
+          },
+          "dependsOn": [
+            "[concat('Microsoft.DBforMySQL/servers/', variables('databaseServerName'))]"
+          ]
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "sshCommand": {
+      "type": "string",
+      "value": "[concat('ssh ', parameters('adminUsername'), '@', variables('longNamingInfix'), '.', resourceGroup().location, '.cloudapp.azure.com')]"
+    }
+  }
+}
