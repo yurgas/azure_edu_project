@@ -12,6 +12,8 @@ certificates for https and for creating VPN connection.
 4. Application gateway used to access WordPress, with https only access
 5. IKEv2 certificate based VPN connection used to connect to virutal network
 6. Create ssh keys for authentication on VM in a scale set
+7. Vnet rules with Sql.endpoint used to connect from Vnet to mysql database
+8. CustomScript extension used to configure VMs in a ScaleSet
 
 # Installation:
 1. Execute ./run_deploy.sh
