@@ -18,8 +18,8 @@ certificates for https and for creating VPN connection.
 # Installation:
 1. Execute ./run_deploy.sh
 2. Import tmp/CAcert.crt as trusted CA on client PC
-3. Import tmp/VPNClient1.pfx as client certificate for vpn on client PC
-4. Configure VPN connection using client certficate, using VPN endpoint from the output
+3. Import tmp/VPNClient1.pfx as client certificate for VPN on client PC
+4. Configure VPN connection using client certificate, using VPN endpoint from the output
    (https://docs.microsoft.com/en-us/azure/vpn-gateway/point-to-site-vpn-client-configuration-azure-cert)
 5. Connect to WordPress using url endpoint from the output and complete installation
 
