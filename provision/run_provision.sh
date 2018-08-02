@@ -12,7 +12,10 @@ AZ_SHARE_USER=$6
 AZ_SHARE_PASS=$7
 AZ_SHARE=$8
 
-#Install required packages and WordPress
+# Install required packages and WordPress
+# a litle trick here in apt-get install, because in Azure there might be another
+# extension, setting up packages at the time, when CustomScript runs,
+# and apt lock could be taken
 until apt-get -y update && apt-get -y install cifs-utils apache2 php libapache2-mod-php php-mcrypt php-mysql php-curl php-gd php-mbstring php-mcrypt php-xml php-xmlrpc
 do
   echo "Try again"
